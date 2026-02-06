@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>가계부 - 스마트 카드 관리</title>
+    
+    <!-- React & DOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+            color: black;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 280px;
+            max-height: 350px;
+        }
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        ::placeholder {
+            color: #cbd5e1 !important;
+            opacity: 1;
+        }
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white !important; padding: 0 !important; }
+            .print-area { 
+                box-shadow: none !important; 
+                border: none !important; 
+                width: 100% !important;
+                max-width: none !important;
+                border-radius: 0 !important;
+                margin: 0 !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- 차트 컴포넌트 ---
+        const SpendingChart = ({ data, labels }) => {
+            const chartRef = useRef(null);
+            const canvasRef = useRef(null);
+
+            useEffect(() => {
+                if (canvasRef.current) {
+                    if (chartRef.current) chartRef.current.destroy();
+
+                    const ctx = canvasRef.current.getContext('2d');
+                    
+                    // 다채로운 막대 색상 팔레트 (Slate, Indigo, Sky, Emerald, Rose)
+                    const colors = [
+                        '#64748b', // 4개월 전
+                        '#6366f1', // 3개월 전
+                        '#0ea5e9', // 2개월 전
+                        '#10b981', // 1개월 전
+                        '#f43f5e'  // 현재 월
+                    ];
+
+                    chartRef.current = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: '청구 금액',
+                                data: data,
+                                backgroundColor: colors,
+                                hoverBackgroundColor: '#000000',
+                                borderRadius: 8,
+                                barThickness: 'flex'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    padding: 14,
+                                    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                                    callbacks: {
+                                        label: (item) => ` ${new Intl.NumberFormat('ko-KR').format(item.raw)}원`
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: { 
+                                    beginAtZero: true, 
+                                    grid: { color: '#e2e8f0' }, 
+                                    ticks: { font: { size: 14, weight: 'bold' }, color: '#000000' } 
+                                },
+                                x: { 
+                                    grid: { display: false }, 
+                                    ticks: { font: { weight: 'bold', size: 14 }, color: '#000000' } 
+                                }
+                            }
+                        }
+                    });
+                }
+                return () => { if (chartRef.current) chartRef.current.destroy(); };
+            }, [data, labels]);
+
+            return (
+                <div className="chart-container">
+                    <canvas ref={canvasRef}></canvas>
+                </div>
+            );
+        };
+
+        // --- 메인 앱 컴포넌트 ---
+        const App = () => {
+            const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
+            const [allData, setAllData] = useState(() => {
+                const saved = localStorage.getItem('household_ledger_pro_v1');
+                return saved ? JSON.parse(saved) : {};
+            });
+
+            const cards = useMemo(() => {
+                return allData[selectedMonth] || [{ id: Date.now(), name: '', amount: '' }];
+            }, [allData, selectedMonth]);
+
+            useEffect(() => {
+                localStorage.setItem('household_ledger_pro_v1', JSON.stringify(allData));
+            }, [allData]);
+
+            const updateData = (newCards) => {
+                setAllData(prev => ({ ...prev, [selectedMonth]: newCards }));
+            };
+
+            const handleCardChange = (id, field, value) => {
+                const newCards = cards.map(c => c.id === id ? { ...c, [field]: value } : c);
+                updateData(newCards);
+            };
+
+            const addCard = () => updateData([...cards, { id: Date.now(), name: '', amount: '' }]);
+            
+            const removeCard = (id) => {
+                if (cards.length <= 1) return updateData([{ id: Date.now(), name: '', amount: '' }]);
+                updateData(cards.filter(c => c.id !== id));
+            };
+
+            const getMonthTotal = (m) => (allData[m] || []).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+
+            const trendData = useMemo(() => {
+                const labels = [];
+                const data = [];
+                for (let i = 4; i >= 0; i--) {
+                    const d = new Date(selectedMonth + "-01");
+                    d.setMonth(d.getMonth() - i);
+                    const mStr = d.toISOString().slice(0, 7);
+                    labels.push(`${parseInt(mStr.split('-')[1])}월`);
+                    data.push(getMonthTotal(mStr));
+                }
+                return { labels, data };
+            }, [allData, selectedMonth]);
+
+            const annualTotal = useMemo(() => {
+                const year = selectedMonth.split('-')[0];
+                return Object.keys(allData)
+                    .filter(m => m.startsWith(year))
+                    .reduce((s, m) => s + getMonthTotal(m), 0);
+            }, [allData, selectedMonth]);
+
+            return (
+                <div className="min-h-screen flex justify-center items-start p-0 sm:p-4 md:p-8">
+                    <div className="print-area w-full max-w-2xl bg-white md:rounded-[2.5rem] md:shadow-xl overflow-hidden border-b md:border border-slate-200">
+                        
+                        {/* 헤더 섹션 - 연한 그레이, 컴팩트한 레이아웃 */}
+                        <div className="bg-slate-200 p-5 md:p-8 text-black border-b border-slate-300">
+                            <div className="flex justify-between items-center mb-5">
+                                <div>
+                                    <h1 className="text-4xl md:text-5xl font-black tracking-tight text-black">가계부</h1>
+                                    <p className="text-sm font-black tracking-[0.2em] uppercase opacity-70">Account Book</p>
+                                </div>
+                                <input 
+                                    type="month" 
+                                    value={selectedMonth}
+                                    onChange={(e) => setSelectedMonth(e.target.value)}
+                                    className="bg-white border-2 border-black rounded-xl px-3 py-2 text-xl font-black focus:ring-2 focus:ring-slate-400 outline-none cursor-pointer"
+                                />
+                            </div>
+                            
+                            {/* 월간 총액 박스 - 선명한 블랙 텍스트 */}
+                            <div className="bg-white p-4 md:p-6 rounded-2xl border-2 border-black shadow-sm">
+                                <p className="text-sm font-black uppercase tracking-widest mb-1">이번 달 총 청구 금액</p>
+                                <div className="flex items-baseline gap-2 flex-wrap">
+                                    <span className="text-5xl md:text-6xl font-black tracking-tighter">
+                                        {new Intl.NumberFormat('ko-KR').format(getMonthTotal(selectedMonth))}
+                                    </span>
+                                    <span className="text-2xl font-black">원</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 입력 섹션 */}
+                        <div className="p-6 md:p-10">
+                            <div className="mb-8 border-l-8 border-black pl-4 py-0.5">
+                                <h2 className="text-2xl font-black">지출 내역</h2>
+                                <p className="text-lg font-bold opacity-60 text-black leading-tight">카드를 추가하고 금액을 입력하세요.</p>
+                            </div>
+
+                            <div className="space-y-1">
+                                <div className="flex gap-4 px-4 py-3 text-base font-black uppercase tracking-widest border-b-2 border-black mb-3">
+                                    <div className="flex-1">카드 이름</div>
+                                    <div className="w-1/2 text-right">청구 금액</div>
+                                </div>
+
+                                {cards.map((card) => (
+                                    <div key={card.id} className="group flex gap-4 items-center px-4 py-4 border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                                        <div className="flex-1 flex items-center gap-4">
+                                            <button 
+                                                onClick={() => removeCard(card.id)}
+                                                className="no-print text-slate-300 hover:text-black font-black text-3xl transition-colors"
+                                            >
+                                                &minus;
+                                            </button>
+                                            <input
+                                                type="text"
+                                                placeholder="카드 이름"
+                                                value={card.name}
+                                                onChange={(e) => handleCardChange(card.id, 'name', e.target.value)}
+                                                className="w-full bg-transparent border-none p-0 focus:ring-0 text-black font-black text-xl placeholder:text-slate-200"
+                                            />
+                                        </div>
+                                        <div className="w-1/2 text-right">
+                                            <input
+                                                type="number"
+                                                placeholder="0"
+                                                value={card.amount}
+                                                onChange={(e) => handleCardChange(card.id, 'amount', e.target.value)}
+                                                className="w-full bg-transparent border-none p-0 text-right focus:ring-0 text-black font-black text-2xl placeholder:text-slate-200"
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+
+                                <button 
+                                    onClick={addCard}
+                                    className="no-print w-full py-6 mt-6 border-2 border-dashed border-slate-300 rounded-2xl text-slate-400 hover:text-black hover:border-black hover:bg-slate-50 transition-all flex justify-center items-center gap-4 text-xl font-black"
+                                >
+                                    <span className="text-3xl">+</span> 카드 추가
+                                </button>
+                            </div>
+
+                            {/* 분석 섹션 */}
+                            <div className="mt-16 pt-12 border-t-2 border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-10">
+                                <div>
+                                    <div className="mb-4 border-l-4 border-slate-400 pl-3">
+                                        <h3 className="text-xl font-black">최근 5개월 추이</h3>
+                                        <p className="text-xs font-black mt-0.5 uppercase tracking-tighter opacity-50">Spending Trend</p>
+                                    </div>
+                                    <div className="bg-slate-50 rounded-[2rem] p-4 border border-slate-200 shadow-inner">
+                                        <SpendingChart data={trendData.data} labels={trendData.labels} />
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-6">
+                                    <div className="mb-4 border-l-4 border-slate-400 pl-3">
+                                        <h3 className="text-xl font-black">연간 요약</h3>
+                                        <p className="text-xs font-black mt-0.5 uppercase tracking-tighter opacity-50">Annual Summary</p>
+                                    </div>
+                                    <div className="bg-white rounded-[2rem] p-8 text-black border-2 border-black shadow-lg flex flex-col justify-center grow">
+                                        <span className="text-base font-black tracking-widest uppercase mb-2 block opacity-50">
+                                            {selectedMonth.split('-')[0]}년 누적 합계
+                                        </span>
+                                        <span className="text-4xl md:text-5xl font-black block leading-none mb-1">
+                                            {new Intl.NumberFormat('ko-KR').format(annualTotal)}
+                                        </span>
+                                        <span className="text-xl font-black opacity-50 text-right text-black">원</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 리셋 */}
+                            <div className="no-print mt-14 flex justify-center border-t border-slate-100 pt-8">
+                                <button 
+                                    onClick={() => confirm("모든 데이터를 초기화하시겠습니까?") && setAllData({})}
+                                    className="text-slate-400 hover:text-black transition-colors text-base font-black border-b-2 border-slate-200 pb-0.5"
+                                >
+                                    데이터 전체 리셋
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-8 text-center border-t border-slate-100">
+                            <p className="text-xs text-black font-black tracking-[0.4em] uppercase">
+                                BORAAPP
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
